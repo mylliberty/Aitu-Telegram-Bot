@@ -72,6 +72,124 @@ def define_role(email):
             return "Преподаватель / Сотрудник"
     return "Неизвестная роль"
 
+@router.message(Command("events"))
+async def get_events_command(message: types.Message):
+    print("✅ events вызван!")
+    try:
+        response = requests.get("http://localhost:5001/api/events")
+        if response.status_code != 200:
+            await message.answer("Ошибка при получении данных с API.")
+            return
+
+        events = response.json()
+        if not events:
+            await message.answer("События не найдены.")
+            return
+
+        # Группировка по языкам
+        grouped = {
+            '🇷🇺 Русский': [(e['title_ru'], e['description_ru'], e['date']) for e in events if e['title_ru'] and e['description_ru']],
+            '🇬🇧 English': [(e['title_en'], e['description_en'], e['date']) for e in events if e['title_en'] and e['description_en']],
+            '🇰🇿 Қазақша': [(e['title_kk'], e['description_kk'], e['date']) for e in events if e['title_kk'] and e['description_kk']],
+        }
+
+        text = "<b>📅 Предстоящие события:</b>\n\n"
+        for lang, items in grouped.items():
+            if items:
+                text += f"<b>{lang}</b>\n"
+                for i, (title, desc, date) in enumerate(items, start=1):
+                    text += f"\n<b>{i}. {title}</b>\n🕓 {date}\n{desc}\n"
+                text += "\n"
+
+        await message.answer(text, parse_mode="HTML")
+
+    except Exception as e:
+        await message.answer(f"Произошла ошибка: {str(e)}")
+
+@router.message(Command("faqs"))
+async def get_faq_command(message: types.Message):
+    print("✅ faq вызван!")
+    try:
+        response = requests.get("http://localhost:5001/api/faqs")
+        if response.status_code != 200:
+            await message.answer("Ошибка при получении данных с API.")
+            return
+
+        faqs = response.json()
+        if not faqs:
+            await message.answer("Вопросы и ответы не найдены.")
+            return
+
+        # Группировка по языкам
+        grouped = {
+            '🇷🇺 Русский': [(faq['question_ru'], faq['answer_ru']) for faq in faqs if faq['question_ru'] and faq['answer_ru']],
+            '🇬🇧 English': [(faq['question_en'], faq['answer_en']) for faq in faqs if faq['question_en'] and faq['answer_en']],
+            '🇰🇿 Қазақша': [(faq['question_kk'], faq['answer_kk']) for faq in faqs if faq['question_kk'] and faq['answer_kk']],
+        }
+
+        text = "<b>📚 Часто задаваемые вопросы (FAQ):</b>\n\n"
+        for lang, items in grouped.items():
+            if items:
+                text += f"<b>{lang}</b>\n"
+                for i, (q, a) in enumerate(items, start=1):
+                    text += f"\n<b>{i}. {q}</b>\n{a}\n"
+                text += "\n"
+
+        await message.answer(text, parse_mode="HTML")
+
+    except Exception as e:
+        await message.answer(f"Произошла ошибка: {str(e)}")
+
+
+@router.message(Command("clubs"))
+async def get_clubs_command(message: types.Message):
+    try:
+        response = requests.get("http://localhost:5001/api/clubs")
+        if response.status_code == 200:
+            clubs = response.json()
+            if not clubs:
+                await message.answer("Клубы не найдены.")
+                return
+
+            text = "📚 Список клубов:\n\n"
+            for club in clubs:
+                text += (
+                    f"🔸 <b>{club['name']}</b>\n"
+                    f"{club['description']}\n"
+                    f"<a href='{club['url']}'>Ссылка на клуб</a>\n\n"
+                )
+            await message.answer(text, parse_mode="HTML")
+        else:
+            await message.answer("Ошибка при получении клубов с API.")
+    except Exception as e:
+        await message.answer(f"Произошла ошибка: {str(e)}")
+
+@router.message(Command("contacts"))
+async def get_contacts_command(message: types.Message):
+    print("✅ contacts вызван!")
+    try:
+        response = requests.get("http://localhost:5001/api/contacts")
+        if response.status_code == 200:
+            contacts = response.json()
+            if not contacts:
+                await message.answer("Контакты не найдены.")
+                return
+
+            text = "📞 Список контактов:\n\n"
+            for contact in contacts:
+                text += (
+                    f"🏢 <b>{contact['department']}</b>\n"
+                    f"📱 Телефон: {contact['phone']}\n"
+                    f"✉️ Email: {contact['email']}\n"
+                    f"📂 Категория: {contact['category']}\n\n"
+                )
+            await message.answer(text, parse_mode="HTML")
+        else:
+            await message.answer("Ошибка при получении контактов с API.")
+    except Exception as e:
+        await message.answer(f"Произошла ошибка: {str(e)}")
+
+
 # Команда /inbox
 @router.message(Command("inbox"))
 async def get_inbox(message: types.Message):
