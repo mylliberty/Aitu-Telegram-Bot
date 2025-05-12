@@ -6,11 +6,11 @@ import os
 import requests
 from dotenv import load_dotenv
 import asyncio
-import redis
-from handlers import router
+from database import AsyncSessionLocal
+from crud import get_token
 
 load_dotenv()
-r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+router = Router()
 
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
@@ -22,11 +22,12 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 dp.include_router(router)
 
-# Команда /start
+# /start
 @router.message(Command("start"))
 async def start_command(message: types.Message):
     user_id = str(message.from_user.id)
-    access_token = r.get(user_id)  # Проверяем, есть ли токен в Redis
+    async with AsyncSessionLocal() as session:
+        access_token = await get_token(session, user_id)
 
     if access_token:
         email = get_user_email(access_token)
@@ -38,43 +39,36 @@ async def start_command(message: types.Message):
     else:
         await message.answer("Привет! Чтобы пользоваться ботом, авторизуйтесь: /login")
 
-# Команда /login
+# /login
 @router.message(Command("login"))
 async def send_login_link(message: types.Message):
     auth_url = (
         f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/authorize"
-        f"?client_id={CLIENT_ID}"
-        f"&response_type=code"
-        f"&redirect_uri={REDIRECT_URI}"
-        f"&response_mode=query"
-        f"&scope=User.Read Mail.Read"
-        f"&state={message.from_user.id}"
+        f"?client_id={CLIENT_ID}&response_type=code&redirect_uri={REDIRECT_URI}"
+        f"&response_mode=query&scope=User.Read Mail.Read&state={message.from_user.id}"
     )
     await message.answer(f"Для авторизации перейдите по ссылке: [Войти]({auth_url})", parse_mode="Markdown")
 
-# Функция для получения email пользователя
 def get_user_email(access_token):
     headers = {"Authorization": f"Bearer {access_token}"}
     url = "https://graph.microsoft.com/v1.0/me"
     response = requests.get(url, headers=headers)
-
     if response.status_code == 200:
         return response.json().get("mail")
     return None
 
-# Функция для определения роли пользователя
 def define_role(email):
     if email:
-        local_part = email.split("@")[0]  # Берем часть до "@"
-        if local_part.isdigit():  # Если только цифры, значит студент
+        local_part = email.split("@")[0]
+        if local_part.isdigit():
             return "Студент"
-        else:  # Если есть буквы, значит преподаватель
+        else:
             return "Преподаватель / Сотрудник"
     return "Неизвестная роль"
 
+# /events
 @router.message(Command("events"))
 async def get_events_command(message: types.Message):
-    print("✅ events вызван!")
     try:
         response = requests.get("http://localhost:5001/api/events")
         if response.status_code != 200:
@@ -86,7 +80,6 @@ async def get_events_command(message: types.Message):
             await message.answer("События не найдены.")
             return
 
-        # Группировка по языкам
         grouped = {
             '🇷🇺 Русский': [(e['title_ru'], e['description_ru'], e['date']) for e in events if e['title_ru'] and e['description_ru']],
             '🇬🇧 English': [(e['title_en'], e['description_en'], e['date']) for e in events if e['title_en'] and e['description_en']],
@@ -106,9 +99,9 @@ async def get_events_command(message: types.Message):
     except Exception as e:
         await message.answer(f"Произошла ошибка: {str(e)}")
 
+# /faqs
 @router.message(Command("faqs"))
 async def get_faq_command(message: types.Message):
-    print("✅ faq вызван!")
     try:
         response = requests.get("http://localhost:5001/api/faqs")
         if response.status_code != 200:
@@ -120,7 +113,6 @@ async def get_faq_command(message: types.Message):
             await message.answer("Вопросы и ответы не найдены.")
             return
 
-        # Группировка по языкам
         grouped = {
             '🇷🇺 Русский': [(faq['question_ru'], faq['answer_ru']) for faq in faqs if faq['question_ru'] and faq['answer_ru']],
             '🇬🇧 English': [(faq['question_en'], faq['answer_en']) for faq in faqs if faq['question_en'] and faq['answer_en']],
@@ -140,7 +132,7 @@ async def get_faq_command(message: types.Message):
     except Exception as e:
         await message.answer(f"Произошла ошибка: {str(e)}")
 
-
+# /clubs
 @router.message(Command("clubs"))
 async def get_clubs_command(message: types.Message):
     try:
@@ -164,9 +156,9 @@ async def get_clubs_command(message: types.Message):
     except Exception as e:
         await message.answer(f"Произошла ошибка: {str(e)}")
 
+# /contacts
 @router.message(Command("contacts"))
 async def get_contacts_command(message: types.Message):
-    print("✅ contacts вызван!")
     try:
         response = requests.get("http://localhost:5001/api/contacts")
         if response.status_code == 200:
@@ -189,12 +181,12 @@ async def get_contacts_command(message: types.Message):
     except Exception as e:
         await message.answer(f"Произошла ошибка: {str(e)}")
 
-
-# Команда /inbox
+# /inbox
 @router.message(Command("inbox"))
 async def get_inbox(message: types.Message):
     user_id = str(message.from_user.id)
-    access_token = r.get(user_id)
+    async with AsyncSessionLocal() as session:
+        access_token = await get_token(session, user_id)
 
     if not access_token:
         await message.answer("Вы не авторизованы! Введите /login.")
@@ -220,25 +212,22 @@ async def get_inbox(message: types.Message):
     else:
         await message.answer(f"Ошибка при получении писем: {response.status_code}")
 
-
-# Словарь для хранения данных о письме (user_id: {recipient, message})
+# ЧЕРНОВИК письма
 email_draft = {}
 
-# Команда /sendemail - запрос email получателя
 @router.message(Command("sendemail"))
 async def ask_recipient(message: types.Message):
     user_id = str(message.from_user.id)
-    access_token = r.get(user_id)
+    async with AsyncSessionLocal() as session:
+        access_token = await get_token(session, user_id)
 
     if not access_token:
         await message.answer("Вы не авторизованы! Введите /login.")
         return
 
-    email_draft[user_id] = {}  # Создаем черновик письма
+    email_draft[user_id] = {}
     await message.answer("Введите email получателя:")
 
-
-# Получаем email получателя и запрашиваем текст письма
 @router.message()
 async def ask_email_body(message: types.Message):
     user_id = str(message.from_user.id)
@@ -252,19 +241,20 @@ async def ask_email_body(message: types.Message):
         recipient = email_draft[user_id]["recipient"]
         email_body = email_draft[user_id]["message"]
 
-        result = send_email(user_id, recipient, email_body)
+        success = await send_email(user_id, recipient, email_body)
 
-        if result:
+        if success:
             await message.answer(f"Письмо отправлено на {recipient}!")
         else:
             await message.answer("Ошибка при отправке письма. Попробуйте позже.")
 
-        del email_draft[user_id]  # Очищаем черновик
+        del email_draft[user_id]
 
+# Async версия отправки email
+async def send_email(user_id, recipient, email_body):
+    async with AsyncSessionLocal() as session:
+        access_token = await get_token(session, user_id)
 
-# Функция отправки письма через Microsoft Graph API
-def send_email(user_id, recipient, email_body):
-    access_token = r.get(user_id)
     if not access_token:
         return False
 
@@ -287,17 +277,13 @@ def send_email(user_id, recipient, email_body):
         "saveToSentItems": "true"
     }
 
-    url = "https://graph.microsoft.com/v1.0/me/sendMail"
-    response = requests.post(url, json=email_data, headers=headers)
-
+    response = requests.post("https://graph.microsoft.com/v1.0/me/sendMail", json=email_data, headers=headers)
     return response.status_code == 202
 
-# Запуск бота
+# MAIN
 async def main():
-    await bot.delete_webhook(drop_pending_updates=True)  # Очищаем старые обновления
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
